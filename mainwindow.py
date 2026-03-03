@@ -2,6 +2,7 @@ import pyqtgraph as pg
 from PySide6.QtWidgets import QMainWindow, QPushButton, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QMessageBox, QFileDialog, QScrollArea, QGridLayout, QSizePolicy
 from PySide6.QtGui import QIcon, QAction, QPixmap
 from PySide6.QtCore import Qt, QSize
+from components.graphWidget import PedalGraphSection, PlateauGraphSection, GraphWidget
 from components.inputWidget import inputWidget
 from components.inputWidgetWrapper import inputWidgetWrapper
 from components.checkboxWrapper import checkboxWrapper
@@ -25,7 +26,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(scroll_area)
 
         scroll_content = QWidget()
-        scroll_content.setMaximumWidth(900)
+        scroll_content.setMaximumWidth(1200)
 
         main_layout = QVBoxLayout(scroll_content)
         main_layout.setSpacing(12)
@@ -37,7 +38,6 @@ class MainWindow(QMainWindow):
         grid_layout.setSpacing(20)
         grid_layout.setAlignment(Qt.AlignCenter)
         
-
         menu_bar = self.menuBar() # menu bar to store file, settings and help
         file_menu = menu_bar.addMenu("File")
 
@@ -188,30 +188,58 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(grid_widget)
 
         #Graph Section
-        self.graphWidget = GraphWidget(self)
-        graphControl = self.graphWidget.create_graph_controls()
+        #self.graphWidget = GraphWidget(self)
+        #graphControl = self.graphWidget.create_graph_controls()
 
-        graph_section = QWidget()
-        graph_layout = QHBoxLayout(graph_section)
-        graph_layout.addStretch(1)
-        graph_layout.addWidget(self.graphWidget)
-        graph_layout.addWidget(graphControl)
-        graph_layout.addStretch(1)
-        main_layout.addWidget(graph_section)
+        #graph_section = QWidget()
+        #graph_layout = QHBoxLayout(graph_section)
+        #graph_layout.addStretch(1)
+        #graph_layout.addWidget(self.graphWidget)
+        #graph_layout.addWidget(graphControl)
+        #graph_layout.addStretch(1)
+        #main_layout.addWidget(graph_section)
+        graphGrid = QGridLayout()
+
+        self.sharedMaxTorque = inputWidget(self, False, 0, 500)
+        self.sharedMaxTorque.setValue(0)
+
+        sharedTorqueContainer = QWidget()
+        sharedTorqueLayout = QHBoxLayout(sharedTorqueContainer)
+        sharedTorqueLayout.addWidget(QLabel("Shared Max Torque:"))
+        sharedTorqueLayout.addWidget(self.sharedMaxTorque)
+        sharedTorqueLayout.addStretch(1)
+        main_layout.addWidget(sharedTorqueContainer)
+
+
+
+        self.pedalMap = PedalGraphSection(self, sharedMaxTorque=self.sharedMaxTorque)
+        graphGrid.addWidget(self.pedalMap, 0, 0)
+
+        self.thermalMap = PlateauGraphSection(self, "Thermal", "Temp (°C)", 70.0, sharedMaxTorque=self.sharedMaxTorque)
+        graphGrid.addWidget(self.thermalMap, 0, 1)
+
+        self.batteryMap = PlateauGraphSection(self, "Battery", "Charge (%)", 100.0, sharedMaxTorque=self.sharedMaxTorque)
+        graphGrid.addWidget(self.batteryMap, 1, 0)
+
+        self.speedMap = PlateauGraphSection(self, "Speed", "RPM", 5000.0, sharedMaxTorque=self.sharedMaxTorque)
+        graphGrid.addWidget(self.speedMap, 1, 1)
+
+        main_layout.addLayout(graphGrid)
 
         #Buttons for sending to VCU section
+
         button_section = QWidget()
         button_layout = QHBoxLayout(button_section)
         button_layout.setAlignment(Qt.AlignCenter)
         self.controlWriteButton = QPushButton("Write Config to VCU")
-        self.controlWriteButton.clicked.connect(self.send_to_can)
+        self.controlWriteButton.clicked.connect(self.configToCAN)
         self.controlWriteButton.setFixedSize(200, 50)
         button_layout.addWidget(self.controlWriteButton)
         self.torqueWriteButton = QPushButton("Write Torque Data to VCU")
+        self.torqueWriteButton.clicked.connect(self.torqueToCan)
         self.torqueWriteButton.setFixedSize(200, 50)
         button_layout.addWidget(self.torqueWriteButton)
         main_layout.addWidget(button_section)
-
         scroll_area.setWidget(scroll_content)
 
     ## HELPER FUNCTIONS
@@ -265,8 +293,9 @@ class MainWindow(QMainWindow):
         if filePath:
             if not filePath.lower().endswith(".xml"):
                 filePath += ".xml"
-            xml_content = self.widgetManager.to_xml() + self.graphWidget.to_xml() + "</Configs>"
-            
+            sharedMaxXML = f'\n   <Shared_Max_Torque>{self.sharedMaxTorque.getStored()}</Shared_Max_Torque>'
+            xml_content = self.widgetManager.to_xml() + sharedMaxXML + self.pedalMap.toXML() + self.thermalMap.toXML() + self.batteryMap.toXML() + self.speedMap.toXML() + "</Configs>"
+            print (xml_content)
             with open(filePath, "w") as file:
                 file.write(xml_content)
                 QMessageBox.information(self, "Success", f"File successfully saved to {filePath}")
@@ -283,32 +312,43 @@ class MainWindow(QMainWindow):
                 root = tree.getroot()
                 xml_content = Tree.tostring(root, encoding ='unicode')
                 self.widgetManager.from_xml(xml_content)
-                deadzone_frac = None
-                max_output = None
-                for child in root:
-                    if child.tag == "Deadzone_Fraction":
-                        deadzone_frac = float(child.text)
-                    elif child.tag == "Max_Output":
-                        max_output = float(child.text)
+                data = {child.tag: child.text for child in root}
+                #shared max
+                if "Shared_Max_Torque" in data:
+                    self.sharedMaxTorque.setValue(float(data["Shared_Max_Torque"]))
+                
+                if "Deadzone_Pedal_Map" in data:
+                    self.pedalMap.fromXML(float(data["Deadzone_Pedal_Map"]))
+                for section, prefix in [(self.thermalMap, "Thermal"), (self.batteryMap, "Battery"), (self.speedMap, "Speed")]:
+                    s_start = data.get(f"Slope_Start_{prefix}")
+                    s_end = data.get(f"Slope_End_{prefix}")
+                    m_torque = data.get(f"Min_Torque_{prefix}")
 
-                if deadzone_frac is not None:
-                    self.graphWidget.deadzoneFrac.setValue(deadzone_frac)
-                    self.graphWidget.on_deadzone_change(deadzone_frac)
+                    if all(v is not None for v in [s_start, s_end, m_torque]):
+                        section.fromXML(float(s_start), float(s_end), float(m_torque))
 
-                if max_output is not None:
-                    self.graphWidget.outputMax.setValue(max_output)
-                    self.graphWidget.on_max_output_change(max_output)
-                QMessageBox.information(self, "Success", f"Configurations loaded from {file_path}")
-    
-    def get_all_config_data(self):
+    def getAllConfigData(self):
         #collect config data to dictionary.
-        config_data = {}
-        config_data.update(self.widgetManager.to_dict())
-        return config_data
-    
-    def send_to_can(self):
+        configData = {}
+        configData.update(self.widgetManager.to_dict())
+        return configData
+
+    def getAllTorqueData(self):
+        torqueData = {}
+        torqueData.update(self.pedalMap.getSettings())
+        torqueData.update(self.thermalMap.get_settings())
+        torqueData.update(self.batteryMap.get_settings())
+        torqueData.update(self.speedMap.get_settings())
+        return torqueData
+
+    def configToCAN(self):
         #collect to dict each time pressed.
-        config_data = self.get_all_config_data()
-        #FINISH CAN LOGIC.
-        print(config_data)
+        configData = self.getAllConfigData()
+        #TODO: CAN LOGIC.
+        print(configData)
+
+    def torqueToCan(self):
+        torqueData = self.getAllTorqueData()
+        print(torqueData)
+        #TODO: CAN LOGIC
                 
