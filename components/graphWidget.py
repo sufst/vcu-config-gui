@@ -6,134 +6,126 @@ from components.inputWidgetWrapper import inputWidgetWrapper
 from components.WidgetManager import widgetManager
 
 class GraphWidget(pg.PlotWidget):
-    def __init__(self, main_window):
-        x_axis = pg.AxisItem(orientation='bottom')
-        y_axis = pg.AxisItem(orientation='left')
-
-        self.initialDeadzone = 0
-        self.initialMaxTorque = 0
-        self.initialMinTorque = 0
-        self.xMax = 100.00
-        self.yMax = 5000.00
-
-        x_axis.setTicks([[(i, str(i)) for i in range(0, int(self.xMax) + 1, int(self.xMax)//10)]])
-        y_axis.setTicks([[(i, str(i)) for i in range(0, int(self.yMax) + 1, int(self.yMax)//10)]])
-
-        super().__init__(main_window, axisItems={'bottom': x_axis, 'left': y_axis})
-        self.setMouseEnabled(x=False, y=False)
-        self.setMinimumSize(600, 400)
-        self.setSizePolicy(
-            QSizePolicy.Expanding,   # Can grow horizontally
-            QSizePolicy.Expanding    # Can grow vertically
-        )
-    
-        self.setXRange(0.00, self.xMax, padding=0.02)
-        self.setYRange(0.00, self.yMax, padding=0)
-        self.setLabel('left', 'Torque (Nm)', color="#F0F0F0", size="12px")
-        self.setLabel('bottom', 'Pedal Position (%)', color="#F0F0F0", size="16px")
-        self.setTitle("Torque Map", color="#F0F0F0", size="16px")
-        # self.setRange(xRange=[0.00, self.xMax], yRange=[0.00, self.yMax], padding=0.05)
-
-        self.plotData = self.plot([], [], symbol='o', symbolSize=10, symbolBrush=('#2A95F6'))
+    def __init__(self, parent=None, title="Graph", xLabel="X Axis", xMax=100.0, yMax=500.0):
+        self.xMax = xMax
+        self.yMax = yMax
+        super().__init__(parent)
         
-        self.deleting = False
-        self.dragging_point = None
-        self.dragging_index = None
-        self.scene().installEventFilter(self)
-        
-        self.autoSort = True ## sort the graph points by x value allow to change later
+        self.setBackground('#1D1D21')
+        self.showGrid(x=True, y=True, alpha=0.3)
+        self.setXRange(0, self.xMax, padding=0.02)
+        self.setYRange(0, self.yMax, padding=0.05)
+        self.setLabel('left', 'Torque (Nm)', color="#F0F0F0")
+        self.setLabel('bottom', xLabel, color="#F0F0F0")
+        self.setTitle(title, color="#F0F0F0", size="14pt")
+        self.setScale(1.0)
+        self.setLimits(xMin=0, xMax=self.xMax, yMin=0, yMax=self.yMax)
+        self.plotData = self.plot([], [], symbol='o', symbolSize=10, symbolBrush='#2A95F6', pen=pg.mkPen('#2A95F6', width=2))
 
-        self.setPlot([self.initialDeadzone, self.xMax], [self.initialMinTorque, self.initialMaxTorque])
-
-        self.pen = pg.mkPen(color=("#09315A"), width=2)
-        self.roi = pg.ROI([0, 0], [self.initialDeadzone, self.yMax], pen=self.pen, hoverPen = self.pen , maxBounds=pg.QtCore.QRectF(0, 0, self.yMax, self.yMax), 
-                            movable=False, rotatable=False, resizable=False, removable=False)
-        self.addItem(self.roi)
-
-
-    def create_graph_controls(self):
-        graphControl = QWidget()
-        graphControl.setLayout(QVBoxLayout())
-        graphControl.layout().setSpacing(0)
-        graphControl.layout().setContentsMargins(0, 0, 0, 0)
-        graphControl.layout().setAlignment(Qt.AlignLeft)
-
-        self.comboBox = QComboBox()
-        self.comboBox.addItems(["Torque map 1", "Torque map 2", "Torque map 3"])
-        graphControl.layout().addWidget(self.comboBox)
-
-        OUTPUTMAXname = "Maximum_Torque"
-        self.outputMax = self.create_input_widget(graphControl, OUTPUTMAXname.replace("_", " "),1, 0, 3000, False, connect_callback=self.on_max_output_change)
-        self.outputMax.setValue(self.initialMinTorque)
-
-        DEADZONEFRACname = "Deadzone_Fraction"
-        self.deadzoneFrac = self.create_input_widget(graphControl, DEADZONEFRACname.replace("_", " "),1, 0, 1, True, connect_callback=self.on_deadzone_change)
-        self.deadzoneFrac.setValue(self.initialDeadzone / 100.0)
-
-        return graphControl
-
-    def on_deadzone_change(self, value):
-        deadzone_percent = value * 100.0
-
-        #ensure deadzone less than last point.
-        if deadzone_percent < self.xMax:
-            xData = list(self.plotData.xData)
-            xData[0] = deadzone_percent
-            self.setPlot(xData, list(self.plotData.yData))
-            #update ROI
-            self.roi.setSize([deadzone_percent, self.yMax])
-
-
-    def on_max_output_change(self, value):
-        yData = list(self.plotData.yData)
-        yData[-1] = value
-        self.setPlot(list(self.plotData.xData), yData)
-
-
-    def update_Plot_Data(self):
-        # self.plotData.setData.sort()
-        # print("graph re-drawn")
-        self.plotData.setData(self.plotData.xData, self.plotData.yData)
-
-    def setPlot(self, x, y):
+    def updatePlateau(self, maxTorque, slopeStart, slopeEnd, minTorque):
+        x = [0, slopeStart, slopeEnd, self.xMax]
+        y = [maxTorque, maxTorque, minTorque, minTorque]
         self.plotData.setData(x, y)
 
-    def from_xml(self, xData, yData):
-        self.setPlot(xData, yData)
-        self.update_Plot_Data()
-        if len(xData) > 0 and len(yData) > 0:
-            self.deadzoneFrac.setValue(xData[0]/100.0)
-            if len(yData) > 1:
-                self.outputMax.setValue(yData[-1])
-        deadzone_percent = xData[0]
-        self.roi.setSize([deadzone_percent, self.yMax])
-        self.roi.removeHandle(0)
-        self.roi.addScaleHandle([1, 0.5], [0, 0.5])
+    def updatePedalCurve(self, maxTorque, deadzonePercent):
+        x = [deadzonePercent, self.xMax]
+        y = [0, maxTorque]
+        self.plotData.setData(x, y)
 
-    def to_xml(self):
-        xml_content = "\n" #init string
-        xml_content += "   <Deadzone_Fraction>" + f"{self.plotData.xData[0]/100.0}" + "</Deadzone_Fraction>\n"
-        xml_content += "   <Max_Output>" + f"{self.plotData.yData[-1]}" + "</Max_Output>\n"
-        return xml_content
-    
-    def create_input_widget(self, parent, label, spacing, minVal, maxVal, isFraction, connect_callback=None):
-        layout = QHBoxLayout()
-        layout.setSpacing(spacing)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setAlignment(Qt.AlignCenter)
+class BaseGraphSection(QWidget):
+    def __init__(self, main_window, title, xLabel, xMax, yMax):
+        super().__init__()
+        self.namePrefix = title.replace(" ", "_") #storing data to dict/xml
+
+        self.layout = QHBoxLayout(self)
         
-        label_widget = QLabel(label)
-        iw = inputWidget(parent, isFraction, minVal, maxVal)
-        apply_btn = QPushButton("Apply")
-        apply_btn.setMaximumWidth(60)
+        self.graph = GraphWidget(main_window, title, xLabel, xMax, yMax)
+        
+        self.sidebar = QWidget()
+        self.sidebar.setFixedWidth(220)
+        self.sidebarLayout = QVBoxLayout(self.sidebar)
+        self.sidebarLayout.setAlignment(Qt.AlignTop)
+        
+        self.layout.addWidget(self.graph, stretch=4)
+        self.layout.addWidget(self.sidebar, stretch=1)
 
-        layout.addWidget(label_widget)
-        layout.addWidget(iw)
-        layout.addWidget(apply_btn)
-        layout.addStretch(1)
-        parent.layout().addLayout(layout)
+class PedalGraphSection(BaseGraphSection):
+    def __init__(self, main_window, sharedMaxTorque):
+        super().__init__(main_window, "Pedal Map", "Pedal (%)", 100.0, 500.0)
+        
+        self.sidebarLayout.addWidget(QLabel("Pedal Settings"))
 
-        if connect_callback:
-            apply_btn.clicked.connect(lambda: connect_callback(iw.getStored()))
+        self.maxTorque = sharedMaxTorque
+        self.deadzone = inputWidget(self, True, 0, 1) #fraction 0-1
+        
+        self.sidebarLayout.addWidget(QLabel("Deadzone Frac:"))
+        self.sidebarLayout.addWidget(self.deadzone)
+        
+        self.applyBtn = QPushButton("Update Map")
+        self.applyBtn.clicked.connect(self.syncPedal)
+        self.sidebarLayout.addWidget(self.applyBtn)
 
-        return iw
+    def syncPedal(self):
+        dzVal = self.deadzone.getStored() * 100.0
+        self.graph.plotData.setData([0, dzVal, 100.0], [0, 0, self.maxTorque.getStored()])
+    
+    def getSettings(self):
+        return {
+            f"{self.namePrefix}_Max_Torque": self.maxTorque.getStored(),
+            f"{self.namePrefix}_Deadzone": self.deadzone.getStored()
+        }
+    
+    def toXML(self):
+        maxTorque = self.maxTorque.getStored()
+        deadzone = self.deadzone.getStored()
+        return f'\n   <Deadzone_{self.namePrefix}>{deadzone}</Deadzone_{self.namePrefix}>\n'
+    
+    def fromXML(self, deadzone):
+        self.deadzone.setValue(deadzone)
+        self.syncPedal()
+
+class PlateauGraphSection(BaseGraphSection):
+    def __init__(self, main_window, title, x_label, x_max, sharedMaxTorque):
+        super().__init__(main_window, title, x_label, x_max, 500.0)
+        
+        self.sidebarLayout.addWidget(QLabel(f"{title} Settings"))
+        self.maxTorque = sharedMaxTorque
+        self.slopeStart = inputWidget(self, False, 0, x_max)
+        self.slopeEnd = inputWidget(self, False, 0, x_max)
+        self.minTorque = inputWidget(self, False, 0, 500)
+
+        self.sidebarLayout.addWidget(QLabel("Slope Start:"))
+        self.sidebarLayout.addWidget(self.slopeStart)
+        self.sidebarLayout.addWidget(QLabel("Slope End:"))
+        self.sidebarLayout.addWidget(self.slopeEnd)
+        self.sidebarLayout.addWidget(QLabel("Min Torque (Shelf):"))
+        self.sidebarLayout.addWidget(self.minTorque)
+
+        self.applyBtn = QPushButton("Update Map")
+        self.applyBtn.clicked.connect(self.syncPlateau)
+        self.sidebarLayout.addWidget(self.applyBtn)
+
+    def syncPlateau(self):
+        x = [0, self.slopeStart.getStored(), self.slopeEnd.getStored(), self.graph.xMax]
+        y = [self.maxTorque.getStored(), self.maxTorque.getStored(), self.minTorque.getStored(), self.minTorque.getStored()]
+        self.graph.plotData.setData(x, y)
+
+    def get_settings(self):
+        return {
+            f"{self.namePrefix}_Max_Torque": self.maxTorque.getStored(),
+            f"{self.namePrefix}_Slope_Start": self.slopeStart.getStored(),
+            f"{self.namePrefix}_Slope_End": self.slopeEnd.getStored(),
+            f"{self.namePrefix}_Min_Torque": self.minTorque.getStored()
+        }
+    
+    def toXML(self):
+        slopeStart = self.slopeStart.getStored()
+        slopeEnd = self.slopeEnd.getStored()
+        minTorque = self.minTorque.getStored()
+        return f'   <Slope_Start_{self.namePrefix}>{slopeStart}</Slope_Start_{self.namePrefix}>\n   <Slope_End_{self.namePrefix}>{slopeEnd}</Slope_End_{self.namePrefix}>\n   <Min_Torque_{self.namePrefix}>{minTorque}</Min_Torque_{self.namePrefix}>\n'
+
+    def fromXML(self, slopeStart, slopeEnd, minTorque):
+        self.slopeStart.setValue(slopeStart)
+        self.slopeEnd.setValue(slopeEnd)
+        self.minTorque.setValue(minTorque)
+        self.syncPlateau()
